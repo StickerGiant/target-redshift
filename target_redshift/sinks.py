@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from datetime import timezone
 import os
 import uuid
 from pathlib import Path
@@ -257,12 +258,18 @@ class RedshiftSink(SQLSink):
             for key, value in self.conformed_schema["properties"].items()
             if _jsonschema_type_check(value, ("object", "array"))
         ]
+        treatment = DatetimeErrorTreatmentEnum.ERROR  # or use config if available
+        # Use parse_timestamps_in_record to update each record before conforming
+        parsed_records = [
+            self.parse_timestamps_in_record(record, self.schema, treatment)
+            for record in records
+        ]
         return [
             {
                 key: (json.dumps(value).replace("None", "") if key in object_keys else value)
                 for key, value in self.conform_record(record).items()
             }
-            for record in records
+            for record in parsed_records
         ]
 
     def write_to_s3(self, records: Iterable[dict[str, Any]]) -> None:
@@ -311,7 +318,7 @@ class RedshiftSink(SQLSink):
         record: dict,
         schema: dict,
         treatment: DatetimeErrorTreatmentEnum,
-    ) -> None:
+    ) -> dict:
         """Parse strings to datetime.datetime values, repairing or erroring on failure.
 
         Attempts to parse every field that is of type date/datetime/time. If its value
@@ -322,7 +329,11 @@ class RedshiftSink(SQLSink):
             record: Individual record in the stream.
             schema: TODO
             treatment: TODO
+        Returns:
+            The altered record with parsed timestamps.
         """
+        self.logger.info("Parsing timestamps in record: %s", record)
+        new_record = record.copy()
         for key, value in record.items():
             if key not in schema["properties"]:
                 if value is not None:
@@ -338,7 +349,8 @@ class RedshiftSink(SQLSink):
                         elif datelike_type == "date":
                             date_val = date_fromisoformat(date_val)
                         else:
-                            date_val = datetime_fromisoformat(date_val)
+                            date_val = datetime_fromisoformat(date_val).astimezone(timezone.utc)
+                            self.logger.info("Parsed datetime value: %s", date_val)
                 except ValueError as ex:
                     date_val = handle_invalid_timestamp_in_record(
                         record,
@@ -349,7 +361,8 @@ class RedshiftSink(SQLSink):
                         treatment,
                         self.logger,
                     )
-                record[key] = date_val
+                new_record[key] = date_val
+        return new_record
 
     def clean_resources(self) -> None:
         """Remove local and s3 resources."""
