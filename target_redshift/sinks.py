@@ -346,8 +346,10 @@ class RedshiftSink(SQLSink):
                     if value is not None:
                         if datelike_type == "time":
                             date_val = time_fromisoformat(date_val)
+                            self.logger.info("Parsed time value: %s", date_val)
                         elif datelike_type == "date":
                             date_val = date_fromisoformat(date_val)
+                            self.logger.info("Parsed date value: %s", date_val)
                         else:
                             date_val = datetime_fromisoformat(date_val).astimezone(timezone.utc)
                             self.logger.info("Parsed datetime value: %s", date_val)
